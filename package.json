@@ -1,0 +1,19 @@
+{
+  "name": "ics-functions",
+  "version": "1.0.0",
+  "description": "",
+  "scripts": {
+    "start": "func start",
+    "test": "echo \"No tests yet...\""
+  },
+  "dependencies": {
+    "@azure/functions": "^4.0.0",
+    "@azure/identity": "^4.10.1",
+    "@azure/service-bus": "^7.9.5",
+    "@microsoft/microsoft-graph-client": "^3.0.7",
+    "@sendgrid/mail": "^8.1.5",
+    "isomorphic-fetch": "^3.0.0",
+    "mongodb": "^6.17.0"
+  },
+  "main": "src/{index.js,functions/*.js}"
+}
