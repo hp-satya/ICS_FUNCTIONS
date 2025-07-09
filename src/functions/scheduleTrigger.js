@@ -1,6 +1,5 @@
 const { app } = require("@azure/functions");
 const { ServiceBusClient } = require("@azure/service-bus");
-const { processEmailMessages } = require("./shared/common");
 const { MongoClient } = require("mongodb");
 
 const connectionString = process.env["MongoDBConnectionString"];
@@ -53,7 +52,7 @@ const html = `<!DOCTYPE html>
 </html>`;
 
 app.timer("scheduleTrigger", {
-  schedule: "0 */5 * * * *",
+  schedule: "*/30 * * * * *", // Every 30 seconds 0 */5 * * * *
   handler: async (myTimer, context) => {
     await client.connect();
     const database = client.db("ics-cluster-1");
@@ -69,32 +68,36 @@ app.timer("scheduleTrigger", {
     try {
       const collection = database.collection("users");
       const serviceBusClient = new ServiceBusClient(serviceBusConnectionString);
-
       const sender = serviceBusClient.createSender(queueName);
 
-      collection.forEach(async (user) => {
-        if (user?.scheduled) {
-          const scheduledTime = new Date(user?.scheduled);
-          const scheduledHours = scheduledTime
-            .getUTCHours()
-            .toString()
-            .padStart(2, "0");
-          const scheduledMinutes = scheduledTime
-            .getUTCMinutes()
-            .toString()
-            .padStart(2, "0");
-          const scheduledFormattedTime = `${scheduledHours}:${scheduledMinutes}`;
+      const users = await collection.find({}).toArray();
 
-          if (scheduledFormattedTime === currentFormattedTime) {
+      for (const user of users) {
+        const { frequency, times } = user.preferences;
+        let messageCount = 0;
+        context.log(
+          `Processing user: ${
+            user.email
+          }, Frequency: ${frequency}, Times: ${times.join(
+            ", "
+          )} at ${currentFormattedTime}`
+        );
+        if (times.includes(currentFormattedTime)) {
+          messageCount++;
+
+          if (
+            frequency === "daily" ||
+            (frequency === "weekly" && currentTime.getUTCDay() === 1)
+          ) {
             context.log(
-              `Triggering action for user: ${user.id} at scheduled time: ${scheduledFormattedTime}`
+              `Triggering action for user: ${user?.email} at scheduled time: ${currentFormattedTime}`
             );
 
             const message = {
               body: JSON.stringify({
-                userId: id,
+                userId: user?._id.toString(),
                 email: user.email,
-                subject: "Test Email from Microsoft Graph",
+                subject: "Your Scheduled Email",
                 html: html,
                 timestamp: new Date().toISOString(),
                 messageId: `email-${Date.now()}-${Math.random()
@@ -104,15 +107,29 @@ app.timer("scheduleTrigger", {
               contentType: "application/json",
             };
             await sender.sendMessages(message);
-            const processedCount = await processEmailMessages(context);
-            context.log(`Processed ${processedCount} emails immediately`);
+            await collection.updateOne(
+              { _id: user._id },
+              {
+                emailSent: true,
+                lastSent: new Date(),
+                count: user?.count ? user.count + messageCount : messageCount,
+              }
+            );
+            context.log(
+              `Email queued for ${user.email} at ${currentFormattedTime}`
+            );
           }
         }
-      });
+
+        context.log(
+          `Total messages to be sent to ${user.email} today: ${messageCount} at ${currentFormattedTime} 🎊🎉`
+        );
+      }
+
       await sender.close();
       await serviceBusClient.close();
       return {
-        body: `Email queued and emails processed successfully!`,
+        body: `Emails processed successfully!`,
       };
     } catch (error) {
       context.log.error("Error querying Cosmos DB:", error);
