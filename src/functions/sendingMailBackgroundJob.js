@@ -2,10 +2,21 @@ const { app } = require("@azure/functions");
 const { ServiceBusClient } = require("@azure/service-bus");
 const { ClientSecretCredential } = require("@azure/identity");
 const { Client } = require("@microsoft/microsoft-graph-client");
+const { MongoClient } = require("mongodb");
+
+const connectionString = process.env["MongoDBConnectionString"];
+const client = new MongoClient(connectionString);
+const project_tenant_id =
+  process.env["PROJECT_TENANT_ID"] ||
+  process.env["Azure_user_id"] ||
+  "cd7a7f4a-01fc-4a13-9886-73eb7f26a8b9";
 
 app.timer("sendingMailBackgroundJob", {
-  schedule: "* */5 * * * *", // Every 5 minutes
+  schedule: "*/20 * * * * *", // Every 20 seconds
   handler: async (myTimer, context) => {
+    await client.connect();
+    const database = client.db("ics-cluster-1");
+    const collection = database.collection("users");
     const queueName = process.env["QUEUE_NAME"] || "email-queue";
     const serviceBusConnectionString =
       process.env["ServiceBusConnectionString"];
@@ -34,7 +45,7 @@ app.timer("sendingMailBackgroundJob", {
 
     try {
       const messages = await receiver.receiveMessages(10, {
-        maxWaitTimeInMs: 5000,
+        maxWaitTimeInMs: 2000,
       });
       let processedCount = 0;
       context.log(`Received ${messages.length} messages from the queue.`);
@@ -42,6 +53,26 @@ app.timer("sendingMailBackgroundJob", {
         try {
           const emailData = JSON.parse(message.body);
           context.log(`Processing email for: ${emailData.email}`);
+
+          // Check if the email was sent recently
+
+          // const lastSent = new Date(emailData.lastSent);
+
+          // const now = new Date();
+
+          // const timeDiff = (now - lastSent) / 1000; // time difference in seconds
+
+          // if (timeDiff < 60) {
+          //   // Assuming we want to prevent sending emails within 60 seconds
+
+          //   context.log(
+          //     `Skipping email to ${emailData.email} as it was sent recently.`
+          //   );
+
+          //   await receiver.completeMessage(message);
+
+          //   continue;
+          // }
 
           const email = {
             message: {
@@ -66,22 +97,32 @@ app.timer("sendingMailBackgroundJob", {
           };
 
           await graphClient
-            .api(`/users/cd7a7f4a-01fc-4a13-9886-73eb7f26a8b9/sendMail`)
+            .api(`/users/${project_tenant_id}/sendMail`)
             .post(email);
           await receiver.completeMessage(message);
           processedCount++;
-          context.log(`Email sent successfully to ${emailData.email}`);
+          await collection.updateOne(
+            { _id: user._id },
+            {
+              $set: {
+                mailSent: true,
+                lastSent: new Date(),
+                count: user?.count ? user.count + 1 : 1,
+              },
+            }
+          );
+          context.log(`Email sent successfully to ${emailData.email}  🎊🎉`);
         } catch (emailError) {
           context.log.error(
             `Error sending email to ${emailData.email}:`,
             emailError
           );
-          await receiver.abandonMessage(message); // Consider implementing a retry mechanism
+          await receiver.abandonMessage(message);
         }
       }
 
       return {
-        body: `Processed ${processedCount} email messages successfully!`,
+        body: `Processed ${processedCount} email messages successfully! 🎊🎉`,
       };
     } catch (error) {
       context.log.error("Error processing email queue:", error);
@@ -89,6 +130,7 @@ app.timer("sendingMailBackgroundJob", {
     } finally {
       await receiver.close();
       await serviceBusClient.close();
+      await client.close();
     }
   },
 });

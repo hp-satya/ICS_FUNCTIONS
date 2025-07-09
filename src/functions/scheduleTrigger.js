@@ -84,6 +84,23 @@ app.timer("scheduleTrigger", {
         );
         if (times.includes(currentFormattedTime)) {
           messageCount++;
+          // Check if the email was sent recently
+
+          const lastSent = user.lastSent ? new Date(user.lastSent) : null;
+
+          const now = new Date();
+
+          const timeDiff = lastSent ? (now - lastSent) / 1000 : Infinity; // time difference in seconds
+
+          if (timeDiff < 60) {
+            // Assuming we want to prevent sending emails within 60 seconds
+
+            context.log(
+              `Skipping email to ${user.email} as it was sent recently.`
+            );
+
+            continue;
+          }
 
           if (
             frequency === "daily" ||
@@ -103,6 +120,7 @@ app.timer("scheduleTrigger", {
                 messageId: `email-${Date.now()}-${Math.random()
                   .toString(36)
                   .substr(2, 9)}`,
+                lastSent: new Date().toISOString(), // Add lastSent timestamp
               }),
               contentType: "application/json",
             };
@@ -110,11 +128,14 @@ app.timer("scheduleTrigger", {
             await collection.updateOne(
               { _id: user._id },
               {
-                emailSent: true,
-                lastSent: new Date(),
-                count: user?.count ? user.count + messageCount : messageCount,
+                $set: {
+                  mailSent: true,
+                  lastSent: new Date(),
+                  count: user?.count ? user.count + 1 : 1,
+                },
               }
             );
+
             context.log(
               `Email queued for ${user.email} at ${currentFormattedTime}`
             );
@@ -122,7 +143,7 @@ app.timer("scheduleTrigger", {
         }
 
         context.log(
-          `Total messages to be sent to ${user.email} today: ${messageCount} at ${currentFormattedTime} 🎊🎉`
+          `Total messages to be sent to ${user.email} today: ${messageCount} at ${currentFormattedTime}`
         );
       }
 
@@ -133,6 +154,8 @@ app.timer("scheduleTrigger", {
       };
     } catch (error) {
       context.log.error("Error querying Cosmos DB:", error);
+    } finally {
+      await client.close();
     }
   },
 });
